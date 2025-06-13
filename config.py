@@ -6,6 +6,23 @@ from utils import get_user_documents_path, get_linux_cursor_path, get_default_dr
 import shutil
 import datetime
 
+# Helper function for macOS Cursor.app path
+def _get_macos_cursor_app_resources_path():
+    """
+    Finds Cursor.app in /Applications or ~/Applications and returns its Contents/Resources/app path.
+    Returns None if not found.
+    """
+    search_paths = [
+        "/Applications/Cursor.app",
+        os.path.expanduser("~/Applications/Cursor.app")
+    ]
+    for app_path in search_paths:
+        if os.path.isdir(app_path):
+            resources_path = os.path.join(app_path, "Contents", "Resources", "app")
+            if os.path.isdir(resources_path):
+                return resources_path
+    return None
+
 EMOJI = {
     "INFO": "ℹ️",
     "WARNING": "⚠️",
@@ -59,18 +76,18 @@ def setup_config(translator=None):
         default_config = {
             'Browser': {
                 'default_browser': 'chrome',
-                'chrome_path': get_default_browser_path('chrome'),
-                'chrome_driver_path': get_default_driver_path('chrome'),
-                'edge_path': get_default_browser_path('edge'),
-                'edge_driver_path': get_default_driver_path('edge'),
-                'firefox_path': get_default_browser_path('firefox'),
-                'firefox_driver_path': get_default_driver_path('firefox'),
-                'brave_path': get_default_browser_path('brave'),
-                'brave_driver_path': get_default_driver_path('brave'),
-                'opera_path': get_default_browser_path('opera'),
-                'opera_driver_path': get_default_driver_path('opera'),
-                'operagx_path': get_default_browser_path('operagx'),
-                'operagx_driver_path': get_default_driver_path('chrome')  # Opera GX 使用 Chrome 驱动
+                'chrome_path': get_default_browser_path('chrome') or '',
+                'chrome_driver_path': get_default_driver_path('chrome') or '',
+                'edge_path': get_default_browser_path('edge') or '',
+                'edge_driver_path': get_default_driver_path('edge') or '',
+                'firefox_path': get_default_browser_path('firefox') or '',
+                'firefox_driver_path': get_default_driver_path('firefox') or '',
+                'brave_path': get_default_browser_path('brave') or '',
+                'brave_driver_path': get_default_driver_path('brave') or '', # Brave uses chromedriver, but utils handles this
+                'opera_path': get_default_browser_path('opera') or '',
+                'opera_driver_path': get_default_driver_path('opera') or '', # Opera might need specific driver or chromedriver based on version
+                'operagx_path': get_default_browser_path('operagx') or '',
+                'operagx_driver_path': get_default_driver_path('operagx') or '' # Opera GX uses Chromium, so chromedriver
             },
             'Turnstile': {
                 'handle_turnstile_time': '2',
@@ -117,31 +134,71 @@ def setup_config(translator=None):
         # Add system-specific path configuration
         if sys.platform == "win32":
             appdata = os.getenv("APPDATA")
-            localappdata = os.getenv("LOCALAPPDATA", "")
+            localappdata = os.getenv("LOCALAPPDATA")
+
+            storage_path_val = ""
+            sqlite_path_val = ""
+            machine_id_path_val = ""
+            cursor_path_val = ""
+            updater_path_val = ""
+            update_yml_path_val = ""
+            product_json_path_val = ""
+
+            if appdata:
+                storage_path_val = os.path.join(appdata, "Cursor", "User", "globalStorage", "storage.json")
+                sqlite_path_val = os.path.join(appdata, "Cursor", "User", "globalStorage", "state.vscdb")
+                machine_id_path_val = os.path.join(appdata, "Cursor", "machineId")
+                # Create storage directory only if appdata and storage_path_val are valid
+            if appdata and storage_path_val: # Check appdata as well for safety
+                    os.makedirs(os.path.dirname(storage_path_val), exist_ok=True)
+
+            if localappdata:
+                cursor_path_val = os.path.join(localappdata, "Programs", "Cursor", "resources", "app")
+                updater_path_val = os.path.join(localappdata, "cursor-updater")
+                update_yml_path_val = os.path.join(localappdata, "Programs", "Cursor", "resources", "app-update.yml")
+                product_json_path_val = os.path.join(localappdata, "Programs", "Cursor", "resources", "app", "product.json")
+
             default_config['WindowsPaths'] = {
-                'storage_path': os.path.join(appdata, "Cursor", "User", "globalStorage", "storage.json"),
-                'sqlite_path': os.path.join(appdata, "Cursor", "User", "globalStorage", "state.vscdb"),
-                'machine_id_path': os.path.join(appdata, "Cursor", "machineId"),
-                'cursor_path': os.path.join(localappdata, "Programs", "Cursor", "resources", "app"),
-                'updater_path': os.path.join(localappdata, "cursor-updater"),
-                'update_yml_path': os.path.join(localappdata, "Programs", "Cursor", "resources", "app-update.yml"),
-                'product_json_path': os.path.join(localappdata, "Programs", "Cursor", "resources", "app", "product.json")
+                'storage_path': storage_path_val,
+                'sqlite_path': sqlite_path_val,
+                'machine_id_path': machine_id_path_val,
+                'cursor_path': cursor_path_val,
+                'updater_path': updater_path_val,
+                'update_yml_path': update_yml_path_val,
+                'product_json_path': product_json_path_val
             }
-            # Create storage directory
-            os.makedirs(os.path.dirname(default_config['WindowsPaths']['storage_path']), exist_ok=True)
             
         elif sys.platform == "darwin":
+            cursor_app_resources_path = _get_macos_cursor_app_resources_path()
+
+            # These paths are generally stable and rely on os.path.expanduser
+            storage_path_val = os.path.abspath(os.path.expanduser("~/Library/Application Support/Cursor/User/globalStorage/storage.json"))
+            sqlite_path_val = os.path.abspath(os.path.expanduser("~/Library/Application Support/Cursor/User/globalStorage/state.vscdb"))
+            machine_id_path_val = os.path.expanduser("~/Library/Application Support/Cursor/machineId")
+            # updater_path might be independent of Cursor.app specific location, often in Application Support
+            updater_path_val = os.path.expanduser("~/Library/Application Support/cursor-updater")
+
+            cursor_path_config_val = cursor_app_resources_path or ""
+            # app-update.yml is usually directly in Contents/Resources, sibling to the 'app' directory (which is cursor_app_resources_path)
+            update_yml_path_config_val = ""
+            if cursor_app_resources_path:
+                # Navigate one level up from 'app' to 'Resources', then join with 'app-update.yml'
+                update_yml_path_config_val = os.path.join(os.path.dirname(cursor_app_resources_path), "app-update.yml")
+
+            product_json_path_config_val = os.path.join(cursor_app_resources_path, "product.json") if cursor_app_resources_path else ""
+
             default_config['MacPaths'] = {
-                'storage_path': os.path.abspath(os.path.expanduser("~/Library/Application Support/Cursor/User/globalStorage/storage.json")),
-                'sqlite_path': os.path.abspath(os.path.expanduser("~/Library/Application Support/Cursor/User/globalStorage/state.vscdb")),
-                'machine_id_path': os.path.expanduser("~/Library/Application Support/Cursor/machineId"),
-                'cursor_path': "/Applications/Cursor.app/Contents/Resources/app",
-                'updater_path': os.path.expanduser("~/Library/Application Support/cursor-updater"),
-                'update_yml_path': "/Applications/Cursor.app/Contents/Resources/app-update.yml",
-                'product_json_path': "/Applications/Cursor.app/Contents/Resources/app/product.json"
+                'storage_path': storage_path_val,
+                'sqlite_path': sqlite_path_val,
+                'machine_id_path': machine_id_path_val,
+                'cursor_path': cursor_path_config_val,
+                'updater_path': updater_path_val,
+                'update_yml_path': update_yml_path_config_val,
+                'product_json_path': product_json_path_config_val
             }
-            # Create storage directory
-            os.makedirs(os.path.dirname(default_config['MacPaths']['storage_path']), exist_ok=True)
+            # Create storage directory if the path seems valid
+            if storage_path_val:
+                os.makedirs(os.path.dirname(storage_path_val), exist_ok=True)
             
         elif sys.platform == "linux":
             # Get the actual user's home directory, handling both sudo and normal cases
@@ -239,14 +296,19 @@ def setup_config(translator=None):
                 print(f"{Fore.RED}{EMOJI['ERROR']} {translator.get('config.error_checking_linux_paths', error=str(e)) if translator else f'Error checking Linux paths: {str(e)}'}{Style.RESET_ALL}")
             
             # Define all paths using the found cursor directory
+            # Ensure cursor_dir related paths become empty string if cursor_dir is None
+            linux_cursor_resources_path = get_linux_cursor_path() # This is from utils, returns full .../resources/app path or None
+
             default_config['LinuxPaths'] = {
-                'storage_path': storage_path,
+                'storage_path': storage_path, # This is already conditional on cursor_dir earlier in the block
                 'sqlite_path': os.path.abspath(os.path.join(cursor_dir, "User/globalStorage/state.vscdb")) if cursor_dir else "",
                 'machine_id_path': os.path.join(cursor_dir, "machineid") if cursor_dir else "",
-                'cursor_path': get_linux_cursor_path(),
-                'updater_path': os.path.join(config_base, "cursor-updater"),
-                'update_yml_path': os.path.join(cursor_dir, "resources/app-update.yml") if cursor_dir else "",
-                'product_json_path': os.path.join(cursor_dir, "resources/app/product.json") if cursor_dir else ""
+                'cursor_path': linux_cursor_resources_path or "", # This is the .../resources/app path from utils
+                'updater_path': os.path.join(config_base, "cursor-updater") if config_base else "", # Ensure config_base is not None
+                # update_yml_path and product_json_path should be relative to the resources_path found by get_linux_cursor_path
+                # Similar to macOS, app-update.yml is often a sibling of the 'app' directory (linux_cursor_resources_path)
+                'update_yml_path': os.path.join(os.path.dirname(linux_cursor_resources_path), "app-update.yml") if linux_cursor_resources_path else "",
+                'product_json_path': os.path.join(linux_cursor_resources_path, "product.json") if linux_cursor_resources_path else ""
             }
 
         # Add tempmail_plus configuration
