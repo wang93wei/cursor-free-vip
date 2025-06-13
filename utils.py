@@ -142,7 +142,21 @@ def get_default_browser_path(browser_type='chrome'):
                         full_path = os.path.join(prog_files_path, app_path_suffix, name)
                         if os.path.exists(full_path):
                             return full_path
-            # Registry check could be added here if needed, but it's more complex.
+                # Registry-based detection for Windows
+                import winreg
+                registry_paths = [
+                    r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}".format(name),
+                    r"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}".format(name),
+                ]
+                for reg_hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                    for reg_path in registry_paths:
+                        try:
+                            with winreg.OpenKey(reg_hive, reg_path) as key:
+                                reg_value, _ = winreg.QueryValueEx(key, None)
+                                if os.path.exists(reg_value):
+                                    return reg_value
+                        except FileNotFoundError:
+                            continue
         elif sys.platform == "darwin":
             for path_prefix in browser_details['darwin']['paths']:
                 for name in browser_details['darwin']['names']:
