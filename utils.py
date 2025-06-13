@@ -2,6 +2,7 @@ import os
 import sys
 import platform
 import random
+import shutil # Added shutil import
 
 def get_user_documents_path():
     """Get user documents path"""
@@ -70,25 +71,125 @@ def get_default_brave_driver_path():
 def get_default_browser_path(browser_type='chrome'):
     """Get default browser executable path"""
     browser_type = browser_type.lower()
-    
+
+    # Define browser details
+    browsers = {
+        'chrome': {
+            'win32': {
+                'names': ['chrome.exe'],
+                'paths': [
+                    r'Google\Chrome\Application',
+                    r'Google\Chrome Beta\Application',
+                    r'Google\Chrome Dev\Application',
+                ]
+            },
+            'darwin': {
+                'names': [
+                    'Google Chrome.app/Contents/MacOS/Google Chrome',
+                    'Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta',
+                    'Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev',
+                ],
+                'paths': ['/Applications/']
+            },
+            'linux': {
+                'names': ['google-chrome', 'chrome', 'chromium', 'chromium-browser', 'google-chrome-beta', 'google-chrome-dev'],
+                'paths': ['/usr/bin/', '/opt/']
+            }
+        },
+        'edge': {
+            'win32': {
+                'names': ['msedge.exe'],
+                'paths': [
+                    r'Microsoft\Edge\Application',
+                    r'Microsoft\Edge Beta\Application',
+                    r'Microsoft\Edge Dev\Application',
+                ]
+            },
+            'darwin': {
+                'names': [
+                    'Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+                    'Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta',
+                    'Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev',
+                ],
+                'paths': ['/Applications/']
+            },
+            'linux': {
+                'names': ['microsoft-edge', 'microsoft-edge-beta', 'microsoft-edge-dev'],
+                'paths': ['/usr/bin/', '/opt/']
+            }
+        }
+    }
+
+    # OS-specific environment variables for program files
+    program_files_paths = []
     if sys.platform == "win32":
-        if browser_type == 'chrome':
-            # 尝试在 PATH 中找到 Chrome
-            try:
-                import shutil
-                chrome_in_path = shutil.which("chrome")
-                if chrome_in_path:
-                    return chrome_in_path
-            except:
-                pass
-            # 使用默认路径
-            return r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        elif browser_type == 'edge':
-            return r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-        elif browser_type == 'firefox':
+        program_files_paths.extend([
+            os.environ.get('PROGRAMFILES', r'C:\Program Files'),
+            os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)'),
+            os.environ.get('LOCALAPPDATA', os.path.expanduser('~\\AppData\\Local'))
+        ])
+
+    def find_browser(browser_details):
+        if sys.platform == "win32":
+            for name in browser_details['win32']['names']:
+                # Check PATH first
+                found_path = shutil.which(name)
+                if found_path:
+                    return found_path
+                # Check common installation paths
+                for app_path_suffix in browser_details['win32']['paths']:
+                    for prog_files_path in program_files_paths:
+                        full_path = os.path.join(prog_files_path, app_path_suffix, name)
+                        if os.path.exists(full_path):
+                            return full_path
+                # Registry-based detection for Windows
+                import winreg
+                registry_paths = [
+                    r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}".format(name),
+                    r"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}".format(name),
+                ]
+                for reg_hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                    for reg_path in registry_paths:
+                        try:
+                            with winreg.OpenKey(reg_hive, reg_path) as key:
+                                reg_value, _ = winreg.QueryValueEx(key, None)
+                                if os.path.exists(reg_value):
+                                    return reg_value
+                        except FileNotFoundError:
+                            continue
+        elif sys.platform == "darwin":
+            for path_prefix in browser_details['darwin']['paths']:
+                for name in browser_details['darwin']['names']:
+                    full_path = os.path.join(path_prefix, name)
+                    if os.path.exists(full_path):
+                        return full_path
+        else:  # Linux
+            for name in browser_details['linux']['names']:
+                # Check PATH using shutil.which
+                found_path = shutil.which(name)
+                if found_path:
+                    return found_path
+                # Check other common locations
+                for path_prefix in browser_details['linux']['paths']:
+                    full_path = os.path.join(path_prefix, name)
+                    if os.path.exists(full_path): # Check if it's executable as well? os.access(full_path, os.X_OK)
+                        return full_path
+        return None
+
+    # --- Main search logic ---
+    # 1. Search for the requested browser_type
+    if browser_type in browsers:
+        found_path = find_browser(browsers[browser_type])
+        if found_path:
+            return found_path
+
+    # 2. Fallback: If specific browser not found, or if a non-chrome/edge type was requested,
+    #    try the original logic for other browsers (firefox, opera, etc.)
+    #    This part retains the original logic for browsers other than Chrome and Edge.
+    if sys.platform == "win32":
+        if browser_type == 'firefox':
             return r"C:\Program Files\Mozilla Firefox\firefox.exe"
         elif browser_type == 'opera':
-            # 尝试多个可能的 Opera 路径
             opera_paths = [
                 r"C:\Program Files\Opera\opera.exe",
                 r"C:\Program Files (x86)\Opera\opera.exe",
@@ -98,9 +199,8 @@ def get_default_browser_path(browser_type='chrome'):
             for path in opera_paths:
                 if os.path.exists(path):
                     return path
-            return opera_paths[0]  # 返回第一个路径，即使它不存在
+            return opera_paths[0]
         elif browser_type == 'operagx':
-            # 尝试多个可能的 Opera GX 路径
             operagx_paths = [
                 os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Opera GX', 'launcher.exe'),
                 os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Opera GX', 'opera.exe'),
@@ -110,9 +210,8 @@ def get_default_browser_path(browser_type='chrome'):
             for path in operagx_paths:
                 if os.path.exists(path):
                     return path
-            return operagx_paths[0]  # 返回第一个路径，即使它不存在
+            return operagx_paths[0]
         elif browser_type == 'brave':
-            # Brave 浏览器的默认安装路径
             paths = [
                 os.path.join(os.environ.get('PROGRAMFILES', ''), 'BraveSoftware/Brave-Browser/Application/brave.exe'),
                 os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), 'BraveSoftware/Brave-Browser/Application/brave.exe'),
@@ -121,68 +220,63 @@ def get_default_browser_path(browser_type='chrome'):
             for path in paths:
                 if os.path.exists(path):
                     return path
-            return paths[0]  # 返回第一个路径，即使它不存在
-    
+            return paths[0] # Fallback to the first defined path
     elif sys.platform == "darwin":
-        if browser_type == 'chrome':
-            return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        elif browser_type == 'edge':
-            return "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
-        elif browser_type == 'firefox':
+        if browser_type == 'firefox':
             return "/Applications/Firefox.app/Contents/MacOS/firefox"
         elif browser_type == 'brave':
             return "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
         elif browser_type == 'opera':
             return "/Applications/Opera.app/Contents/MacOS/Opera"
-        elif browser_type == 'operagx':
+        elif browser_type == 'operagx': # Note: Original code had /Opera, might be specific to GX version
             return "/Applications/Opera GX.app/Contents/MacOS/Opera"
-        
     else:  # Linux
-        if browser_type == 'chrome':
-            # 尝试多种可能的名称
-            chrome_names = ["google-chrome", "chrome", "chromium", "chromium-browser"]
-            for name in chrome_names:
-                try:
-                    import shutil
-                    path = shutil.which(name)
-                    if path:
-                        return path
-                except:
-                    pass
-            return "/usr/bin/google-chrome"
-        elif browser_type == 'edge':
-            return "/usr/bin/microsoft-edge"
-        elif browser_type == 'firefox':
-            return "/usr/bin/firefox"
-        elif browser_type == 'opera':
-            return "/usr/bin/opera"
-        elif browser_type == 'operagx':
-            # 尝试常见的 Opera GX 路径
-            operagx_names = ["opera-gx"]
-            for name in operagx_names:
-                try:
-                    import shutil
-                    path = shutil.which(name)
-                    if path:
-                        return path
-                except:
-                    pass
-            return "/usr/bin/opera-gx"
-        elif browser_type == 'brave':
-            # 尝试常见的 Brave 路径
-            brave_names = ["brave", "brave-browser"]
-            for name in brave_names:
-                try:
-                    import shutil
-                    path = shutil.which(name)
-                    if path:
-                        return path
-                except:
-                    pass
-            return "/usr/bin/brave-browser"
+        # For linux, shutil.which is generally preferred for firefox, opera, brave if they are in PATH
+        other_browsers_linux = {
+            'firefox': 'firefox',
+            'opera': 'opera',
+            'operagx': 'opera-gx', # Assuming 'opera-gx' is the command for Opera GX
+            'brave': 'brave-browser' # or 'brave'
+        }
+        if browser_type in other_browsers_linux:
+            found_path = shutil.which(other_browsers_linux[browser_type])
+            if found_path:
+                return found_path
+            # Fallback to common hardcoded paths if not in PATH
+            if browser_type == 'firefox': return "/usr/bin/firefox"
+            if browser_type == 'opera': return "/usr/bin/opera"
+            if browser_type == 'operagx': return "/usr/bin/opera-gx" # Example path
+            if browser_type == 'brave': return "/usr/bin/brave-browser" # Example path
+
+
+    # 3. Final Fallback: If the requested browser_type (even if it's chrome/edge) was not found by dynamic search,
+    #    and it's not one of the other specific types, try the original hardcoded defaults for Chrome/Edge.
+    #    This ensures we still have a default if dynamic searching fails.
+    if browser_type == 'chrome':
+        if sys.platform == "win32": return r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        if sys.platform == "darwin": return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        return "/usr/bin/google-chrome" # Linux
+    if browser_type == 'edge':
+        if sys.platform == "win32": return r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        if sys.platform == "darwin": return "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+        return "/usr/bin/microsoft-edge" # Linux
+
+    # 4. Ultimate Fallback: if the requested browser type is still not found, default to searching for 'chrome'
+    #    This is the same behavior as the original end of the function.
+    if browser_type not in ['chrome', 'edge']: # Avoid infinite recursion if chrome itself wasn't found
+        # This call will perform dynamic search for chrome, then hardcoded chrome.
+        return get_default_browser_path('chrome')
     
-    # 如果找不到指定的浏览器类型，则返回 Chrome 的路径
-    return get_default_browser_path('chrome')
+    # If all else fails (e.g. 'chrome' was requested but not found anywhere)
+    # return a sensible default chrome path for the OS as a last resort.
+    # This part should ideally not be reached if chrome search is comprehensive.
+    if sys.platform == "win32":
+        return r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    elif sys.platform == "darwin":
+        return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    else: # Linux
+        return "/usr/bin/google-chrome"
+
 
 def get_linux_cursor_path():
     """Get Linux Cursor path"""
